@@ -1,13 +1,6 @@
 {
-  "itemGroup.sandphysis": "Example Mod Tab",
-  "block.sandphysis.example_block": "Example Block",
-  "item.sandphysis.example_item": "Example Item",
-
   "sandphysis.configuration.title": "Sand physis Configs",
   "sandphysis.configuration.section.sandphysis.common.toml": "Sand physis Configs",
   "sandphysis.configuration.section.sandphysis.common.toml.title": "Sand physis Configs",
-  "sandphysis.configuration.items": "Item List",
-  "sandphysis.configuration.logDirtBlock": "Log Dirt Block",
-  "sandphysis.configuration.magicNumberIntroduction": "Magic Number Text",
-  "sandphysis.configuration.magicNumber": "Magic Number"
+  "sandphysis.configuration.autoDisassembly": "Auto-Disassembly"
 }

@@ -4,6 +4,7 @@ import dev.ryanhcode.sable.api.SubLevelAssemblyHelper;
 import dev.ryanhcode.sable.api.SubLevelAssemblyHelper.GatherResult;
 import dev.ryanhcode.sable.sublevel.ServerSubLevel;
 import net.minecraft.core.BlockPos;
+import net.minecraft.nbt.CompoundTag;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.entity.item.FallingBlockEntity;
 import net.minecraft.world.level.Level;
@@ -55,6 +56,10 @@ public class FallingBlockEntityFallMixin {
                 cir.setReturnValue(sandphysis$create(level, pos.getX() + 0.5, pos.getY(), pos.getZ() + 0.5, state));
                 return;
             }
+
+            CompoundTag tag = new CompoundTag();
+            tag.putBoolean("sandphysis_managed", true);
+            subLevel.setUserDataTag(tag);
 
             sandphysis$LOGGER.info("Converted falling block at {} to sub-level {}", pos, subLevel.getUniqueId());
 
