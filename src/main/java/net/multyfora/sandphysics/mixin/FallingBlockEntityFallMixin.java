@@ -4,6 +4,7 @@ import dev.ryanhcode.sable.api.SubLevelAssemblyHelper;
 import dev.ryanhcode.sable.api.SubLevelAssemblyHelper.GatherResult;
 import dev.ryanhcode.sable.sublevel.ServerSubLevel;
 import net.minecraft.core.BlockPos;
+import net.minecraft.core.Direction;
 import net.minecraft.nbt.CompoundTag;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.tags.BlockTags;
@@ -48,8 +49,20 @@ public class FallingBlockEntityFallMixin {
                 return;
             }
 
+            var assembledPositions = result.blocks();
+
+            // Notify non-assembled neighbors that their adjacent block is about to be removed
+            for (BlockPos assembledPos : assembledPositions) {
+                for (Direction dir : Direction.values()) {
+                    BlockPos neighborPos = assembledPos.relative(dir);
+                    if (!assembledPositions.contains(neighborPos)) {
+                        serverLevel.neighborChanged(neighborPos, state.getBlock(), assembledPos);
+                    }
+                }
+            }
+
             ServerSubLevel subLevel = SubLevelAssemblyHelper.assembleBlocks(
-                serverLevel, pos, result.blocks(), result.boundingBox()
+                serverLevel, pos, assembledPositions, result.boundingBox()
             );
 
             if (subLevel == null || subLevel.isRemoved()) {
@@ -57,6 +70,15 @@ public class FallingBlockEntityFallMixin {
                 level.setBlock(pos, Blocks.AIR.defaultBlockState(), 3);
                 cir.setReturnValue(sandphysis$create(level, pos.getX() + 0.5, pos.getY(), pos.getZ() + 0.5, state));
                 return;
+            }
+
+            for (BlockPos assembledPos : assembledPositions) {
+                serverLevel.setBlock(assembledPos, Blocks.AIR.defaultBlockState(), 2);
+            }
+
+            for (BlockPos assembledPos : assembledPositions) {
+                state.updateNeighbourShapes(serverLevel, assembledPos, 3);
+                serverLevel.updateNeighborsAt(assembledPos, state.getBlock());
             }
 
             CompoundTag tag = new CompoundTag();

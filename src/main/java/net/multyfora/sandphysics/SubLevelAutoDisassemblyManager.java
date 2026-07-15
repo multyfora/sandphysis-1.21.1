@@ -22,6 +22,7 @@ import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.AnvilBlock;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.Blocks;
+import net.minecraft.world.level.block.PointedDripstoneBlock;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.chunk.LevelChunk;
 import net.minecraft.world.level.chunk.LevelChunkSection;
@@ -46,6 +47,8 @@ public class SubLevelAutoDisassemblyManager implements SubLevelObserver {
     public static final long DISASSEMBLY_IDLE_SECONDS = 100;
     /** How many consecutive ticks a sub-level must be stationary before the idle clock starts. */
     public static final long STATIONARY_TICKS_REQUIRED = 100;  // 5 seconds at 20 TPS
+    /** How many stationary ticks after impact before disassembly (disassembleOnImpact mode). */
+    private static final int POST_IMPACT_DELAY_TICKS = 60; // 3 seconds at 20 TPS
 
     private static final String SANDPHYSIS_MANAGED_KEY = "sandphysis_managed";
     private static final String SANDPHYSIS_ANVIL_KEY = "sandphysis_anvil";
@@ -58,6 +61,7 @@ public class SubLevelAutoDisassemblyManager implements SubLevelObserver {
     private final Map<UUID, Vector3d> lastPositions = new HashMap<>();
     private final Map<UUID, Integer> stationaryTicks = new HashMap<>();
     private final Map<UUID, Double> prevVelocitiesY = new HashMap<>();
+    private final Map<UUID, Integer> impactStationaryTicks = new HashMap<>();
 
     public void onContainerReady(Level level, SubLevelContainer container) {
         if (level instanceof ServerLevel) {
@@ -78,6 +82,7 @@ public class SubLevelAutoDisassemblyManager implements SubLevelObserver {
         lastPositions.remove(uuid);
         stationaryTicks.remove(uuid);
         prevVelocitiesY.remove(uuid);
+        impactStationaryTicks.remove(uuid);
     }
 
     @Override
@@ -95,28 +100,43 @@ public class SubLevelAutoDisassemblyManager implements SubLevelObserver {
 
             UUID uuid = subLevel.getUniqueId();
 
-            // --- Impact detection (always on) ---
-            // Compute velocity from position delta (blocks/tick), then convert to blocks/sec
             Vector3d currentPos = new Vector3d(subLevel.logicalPose().position());
             Vector3d lastPos = lastPositions.get(uuid);
 
             double velY = 0;
             if (lastPos != null) {
-                velY = (currentPos.y - lastPos.y) * 20.0; // convert blocks/tick → blocks/sec
+                velY = (currentPos.y - lastPos.y) * 20.0;
             }
             lastPositions.put(uuid, currentPos);
 
+            double distSq = lastPos != null ? currentPos.distanceSquared(lastPos) : 0;
+
             double prevVelY = prevVelocitiesY.getOrDefault(uuid, 0.0);
 
-            // Impact when velocity goes from fast-downward to stopped/bouncing
-            // (velY increases by >1 m/s in one tick — catches both sudden stop and bounce)
             if (prevVelY < -IMPACT_VELOCITY_THRESHOLD && velY > prevVelY + 1.0) {
-                LOGGER.info("Impact detected for sub-level {}: prevVelY={}, velY={}", uuid.toString().substring(0, 8), String.format("%.3f", prevVelY), String.format("%.3f", velY));
                 handleImpact(subLevel, tag, -prevVelY);
+                if (Config.DISASSEMBLE_ON_IMPACT.getAsBoolean()) {
+                    impactStationaryTicks.putIfAbsent(uuid, 0);
+                }
             }
             prevVelocitiesY.put(uuid, velY);
 
-            // --- Auto-disassembly (config-gated) ---
+            if (Config.DISASSEMBLE_ON_IMPACT.getAsBoolean() && impactStationaryTicks.containsKey(uuid)) {
+                if (distSq < STATIONARY_THRESHOLD_SQ) {
+                    int ticks = impactStationaryTicks.get(uuid) + 1;
+                    if (ticks >= POST_IMPACT_DELAY_TICKS) {
+                        impactStationaryTicks.remove(uuid);
+                        LOGGER.info("Disassembling post-impact sub-level {} at {}", uuid, currentPos);
+                        disassembleSubLevel(subLevel);
+                        continue;
+                    } else {
+                        impactStationaryTicks.put(uuid, ticks);
+                    }
+                } else {
+                    impactStationaryTicks.put(uuid, 0);
+                }
+            }
+
             if (!autoDisassembly) continue;
             if (protectedSubLevels.contains(uuid)) continue;
 
@@ -124,8 +144,6 @@ public class SubLevelAutoDisassemblyManager implements SubLevelObserver {
                 stationaryTicks.put(uuid, 0);
                 continue;
             }
-
-            double distSq = currentPos.distanceSquared(lastPos);
 
             if (distSq < STATIONARY_THRESHOLD_SQ) {
                 int ticks = stationaryTicks.get(uuid) + 1;
@@ -153,27 +171,37 @@ public class SubLevelAutoDisassemblyManager implements SubLevelObserver {
     private void handleImpact(ServerSubLevel subLevel, CompoundTag tag, double speed) {
         boolean hasAnvil = tag.getBoolean(SANDPHYSIS_ANVIL_KEY);
         boolean hasDripstone = tag.getBoolean(SANDPHYSIS_DRIPSTONE_KEY);
-        if (!hasAnvil && !hasDripstone) return;
 
-        ServerLevel level = subLevel.getLevel();
-        BoundingBox3dc worldBounds = subLevel.boundingBox();
-        AABB damageBox = new AABB(
-            worldBounds.minX(), worldBounds.minY() - 1, worldBounds.minZ(),
-            worldBounds.maxX(), worldBounds.maxY(), worldBounds.maxZ()
-        );
+        if (hasAnvil || hasDripstone) {
+            ServerLevel level = subLevel.getLevel();
+            BoundingBox3dc worldBounds = subLevel.boundingBox();
+            AABB damageBox = new AABB(
+                worldBounds.minX(), worldBounds.minY() - 1, worldBounds.minZ(),
+                worldBounds.maxX(), worldBounds.maxY(), worldBounds.maxZ()
+            );
 
-        if (hasAnvil) {
-            int damage = Math.min((int) Math.ceil(speed / 2.0), 40);
-            if (damage <= 0) return;
-            hurtEntities(level, damageBox, level.damageSources().anvil(null), damage);
-            degradeAnvilBlocks(subLevel);
+            if (hasAnvil) {
+                int cap = Config.ANVIL_DAMAGE_CAP.getAsInt();
+                if (cap > 0) {
+                    int damage = Math.min((int) Math.ceil(speed / 2.0), cap);
+                    if (damage > 0) {
+                        hurtEntities(level, damageBox, level.damageSources().anvil(null), damage);
+                        degradeAnvilBlocks(subLevel);
+                    }
+                }
+            }
+
+            if (hasDripstone) {
+                int cap = Config.DRIPSTONE_DAMAGE_CAP.getAsInt();
+                if (cap > 0) {
+                    int damage = Math.min((int) Math.ceil(speed * 1.5), cap);
+                    if (damage > 0) {
+                        hurtEntities(level, damageBox, level.damageSources().fallingStalactite(null), damage);
+                    }
+                }
+            }
         }
 
-        if (hasDripstone) {
-            int damage = Math.min((int) Math.ceil(speed * 1.5), 40);
-            if (damage <= 0) return;
-            hurtEntities(level, damageBox, level.damageSources().fallingStalactite(null), damage);
-        }
     }
 
     private static void hurtEntities(ServerLevel level, AABB box, net.minecraft.world.damagesource.DamageSource source, int damage) {
@@ -290,8 +318,14 @@ public class SubLevelAutoDisassemblyManager implements SubLevelObserver {
                             BlockPos worldPos = new BlockPos(worldX, worldY, worldZ);
                             BlockPos plotPos = new BlockPos(plotX, plotY, plotZ);
 
-                            level.setBlock(worldPos, state, 3);
-                            level.setBlock(plotPos, Blocks.AIR.defaultBlockState(), 3);
+                            if (state.getBlock() instanceof PointedDripstoneBlock) {
+                                level.setBlock(plotPos, Blocks.AIR.defaultBlockState(), 3);
+                                Block.popResource(level, worldPos, state.getBlock().asItem().getDefaultInstance());
+                                level.levelEvent(2001, worldPos, Block.getId(state));
+                            } else {
+                                level.setBlock(worldPos, state, 3);
+                                level.setBlock(plotPos, Blocks.AIR.defaultBlockState(), 3);
+                            }
                         }
                     }
                 }

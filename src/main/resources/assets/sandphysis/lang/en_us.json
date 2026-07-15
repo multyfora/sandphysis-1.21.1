@@ -1,6 +1,9 @@
 {
-  "sandphysis.configuration.title": "Sand physis Configs",
-  "sandphysis.configuration.section.sandphysis.common.toml": "Sand physis Configs",
-  "sandphysis.configuration.section.sandphysis.common.toml.title": "Sand physis Configs",
-  "sandphysis.configuration.autoDisassembly": "Auto-Disassembly"
+  "sandphysis.configuration.title": "Sand physics Configs",
+  "sandphysis.configuration.section.sandphysis.common.toml": "Sand physics Configs",
+  "sandphysis.configuration.section.sandphysis.common.toml.title": "Sand physics Configs",
+  "sandphysis.configuration.autoDisassembly": "Auto-Disassembly",
+  "sandphysis.configuration.disassembleOnImpact": "Disassemble on impact",
+  "sandphysis.configuration.anvilDamageCap": "Anvil Damage Cap",
+  "sandphysis.configuration.dripstoneDamageCap": "Dripstone Damage Cap"
 }
